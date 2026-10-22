@@ -1,0 +1,445 @@
+
+import streamlit as st
+import pandas as pd
+import plotly.express as px
+
+# ---------------- PAGE CONFIG ----------------
+st.set_page_config(
+    page_title="Marketing ROI | Analytics",
+    page_icon="📊",
+    layout="wide"
+)
+
+# ---------------- PROFESSIONAL STYLING ----------------
+st.markdown("""
+<style>
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        max-width: 1450px;
+    }
+    .main-title {
+        font-size: 2.35rem;
+        font-weight: 800;
+        margin-bottom: 0.2rem;
+    }
+    .subtitle {
+        color: #64748b;
+        font-size: 1rem;
+        margin-bottom: 1.5rem;
+    }
+    div[data-testid="stMetric"] {
+        background: var(--secondary-background-color);
+        border: 1px solid rgba(128,128,128,0.25);
+        padding: 18px;
+        border-radius: 12px;
+    }
+    div[data-testid="stMetricLabel"] {
+        font-weight: 600;
+    }
+    .section-heading {
+        font-size: 1.35rem;
+        font-weight: 700;
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
+    }
+    .footer {
+        text-align: center;
+        color: #64748b;
+        padding: 22px 0 5px 0;
+        font-size: 0.85rem;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------- SAMPLE DATA ----------------
+sample_data = pd.DataFrame({
+    "Campaign": [
+        "Summer Sale", "Customer Retention", "Festive Offer",
+        "Product Promotion", "High Intent Search", "Brand Awareness",
+        "Video Promotion", "Lead Generation", "Remarketing",
+        "Retargeting"
+    ],
+    "Channel": [
+        "Email", "Email", "Email", "Search Ads", "Search Ads",
+        "Social Media", "Social Media", "Social Media",
+        "Display Ads", "Display Ads"
+    ],
+    "Spend_INR": [
+        10000, 8000, 12000, 25000, 30000,
+        20000, 22000, 18000, 10000, 15000
+    ],
+    "Revenue_INR": [
+        30000, 20000, 24000, 45000, 54000,
+        32000, 35000, 27000, 14000, 18000
+    ],
+    "Clicks": [
+        5000, 4000, 6000, 7000, 8000,
+        8000, 7500, 6300, 3000, 2400
+    ],
+    "Conversions": [
+        500, 400, 580, 700, 800,
+        400, 380, 310, 150, 120
+    ]
+})
+
+# ---------------- HEADER ----------------
+st.markdown(
+    '<div class="main-title">📊 Marketing Campaign ROI Analysis</div>',
+    unsafe_allow_html=True
+)
+st.markdown(
+    '<div class="subtitle">Measure performance. Compare channels. '
+    'Make smarter marketing decisions.</div>',
+    unsafe_allow_html=True
+)
+
+# ---------------- SIDEBAR ----------------
+st.sidebar.title("⚙️ Dashboard Controls")
+st.sidebar.caption("Marketing analytics workspace")
+
+uploaded_file = st.sidebar.file_uploader(
+    "Upload campaign data (CSV)",
+    type=["csv"]
+)
+
+if uploaded_file is not None:
+    try:
+        df = pd.read_csv(uploaded_file)
+        data_source = "Uploaded CSV"
+    except Exception as error:
+        st.error(f"Could not read this CSV file: {error}")
+        st.stop()
+else:
+    df = sample_data.copy()
+    data_source = "Built-in sample data"
+
+required = [
+    "Campaign", "Channel", "Spend_INR",
+    "Revenue_INR", "Clicks", "Conversions"
+]
+
+missing = [column for column in required if column not in df.columns]
+
+if missing:
+    st.error(
+        "Your CSV is missing these required columns: "
+        + ", ".join(missing)
+    )
+    st.info("Please check the column names and upload your CSV again.")
+    st.stop()
+
+if df.empty:
+    st.warning("The uploaded CSV contains no campaign records.")
+    st.stop()
+
+# Convert required numeric columns safely
+numeric_columns = [
+    "Spend_INR", "Revenue_INR", "Clicks", "Conversions"
+]
+
+for column in numeric_columns:
+    df[column] = pd.to_numeric(df[column], errors="coerce")
+
+if df[numeric_columns].isna().any().any():
+    st.error(
+        "Some numeric fields are blank or invalid. "
+        "Please correct Spend_INR, Revenue_INR, Clicks, "
+        "and Conversions in your CSV."
+    )
+    st.stop()
+
+if (df[["Spend_INR", "Clicks", "Conversions"]] < 0).any().any():
+    st.error("Spend, clicks, and conversions cannot be negative.")
+    st.stop()
+
+if (df["Spend_INR"] == 0).any():
+    st.warning(
+        "Rows with zero campaign spend have undefined ROI. "
+        "They will be excluded from ROI rankings."
+    )
+
+df["Campaign"] = df["Campaign"].fillna("Unnamed Campaign").astype(str)
+df["Channel"] = df["Channel"].fillna("Unspecified").astype(str)
+
+df["Net_Return_INR"] = df["Revenue_INR"] - df["Spend_INR"]
+
+df["ROI_Percent"] = (
+    df["Net_Return_INR"]
+    / df["Spend_INR"].where(df["Spend_INR"] != 0)
+    * 100
+)
+
+df["Conversion_Rate"] = (
+    df["Conversions"]
+    / df["Clicks"].where(df["Clicks"] != 0)
+    * 100
+)
+
+df["Cost_Per_Conversion_INR"] = (
+    df["Spend_INR"]
+    / df["Conversions"].where(df["Conversions"] != 0)
+)
+
+st.sidebar.success(f"Data source: {data_source}")
+st.sidebar.caption(f"Campaign records: {len(df):,}")
+
+# ---------------- FILTER ----------------
+channels = sorted(df["Channel"].unique().tolist())
+
+selected_channel = st.sidebar.selectbox(
+    "Filter by marketing channel",
+    ["All Channels"] + channels
+)
+
+filtered = df.copy()
+
+if selected_channel != "All Channels":
+    filtered = filtered[filtered["Channel"] == selected_channel]
+
+if filtered.empty:
+    st.warning("No campaign records match this filter.")
+    st.stop()
+
+# ---------------- KPI CARDS ----------------
+total_spend = filtered["Spend_INR"].sum()
+total_revenue = filtered["Revenue_INR"].sum()
+net_return = total_revenue - total_spend
+overall_roi = net_return / total_spend * 100 if total_spend else 0
+
+total_clicks = filtered["Clicks"].sum()
+total_conversions = filtered["Conversions"].sum()
+
+conversion_rate = (
+    total_conversions / total_clicks * 100
+    if total_clicks else 0
+)
+
+st.markdown('<div class="section-heading">Executive Overview</div>',
+            unsafe_allow_html=True)
+
+k1, k2, k3, k4 = st.columns(4)
+
+k1.metric("Total Spend", f"₹{total_spend:,.0f}")
+k2.metric("Total Revenue", f"₹{total_revenue:,.0f}")
+k3.metric("Net Return", f"₹{net_return:,.0f}")
+k4.metric("Overall ROI", f"{overall_roi:.2f}%")
+
+k5, k6, k7 = st.columns(3)
+k5.metric("Campaigns Analysed", f"{len(filtered):,}")
+k6.metric("Total Conversions", f"{total_conversions:,.0f}")
+k7.metric("Conversion Rate", f"{conversion_rate:.2f}%")
+
+st.divider()
+
+# ---------------- CHART DATA ----------------
+channel_summary = (
+    filtered.groupby("Channel", as_index=False)
+    .agg(
+        Spend=("Spend_INR", "sum"),
+        Revenue=("Revenue_INR", "sum"),
+        Conversions=("Conversions", "sum"),
+        Clicks=("Clicks", "sum")
+    )
+)
+
+channel_summary["ROI (%)"] = (
+    (channel_summary["Revenue"] - channel_summary["Spend"])
+    / channel_summary["Spend"].where(channel_summary["Spend"] != 0)
+    * 100
+)
+
+# ---------------- CHARTS ----------------
+st.markdown('<div class="section-heading">Campaign Performance</div>',
+            unsafe_allow_html=True)
+
+left, right = st.columns(2)
+
+with left:
+    roi_chart_data = channel_summary.dropna(subset=["ROI (%)"])
+
+    fig_roi = px.bar(
+        roi_chart_data.sort_values("ROI (%)", ascending=True),
+        x="ROI (%)",
+        y="Channel",
+        orientation="h",
+        text="ROI (%)",
+        title="ROI by Marketing Channel",
+        color="ROI (%)",
+        color_continuous_scale="Teal"
+    )
+
+    fig_roi.update_traces(
+        texttemplate="%{text:.1f}%",
+        textposition="outside",
+        cliponaxis=False
+    )
+    fig_roi.update_layout(
+        coloraxis_showscale=False,
+        xaxis_title="Return on Investment (%)",
+        yaxis_title="",
+        margin=dict(l=10, r=35, t=60, b=20)
+    )
+    st.plotly_chart(fig_roi, use_container_width=True)
+
+with right:
+    comparison = channel_summary.melt(
+        id_vars="Channel",
+        value_vars=["Spend", "Revenue"],
+        var_name="Metric",
+        value_name="Amount (₹)"
+    )
+
+    fig_comparison = px.bar(
+        comparison,
+        x="Channel",
+        y="Amount (₹)",
+        color="Metric",
+        barmode="group",
+        title="Marketing Spend vs Revenue",
+        color_discrete_sequence=["#64748b", "#0d9488"]
+    )
+
+    fig_comparison.update_layout(
+        xaxis_title="",
+        yaxis_title="Amount (₹)",
+        legend_title="",
+        margin=dict(l=10, r=10, t=60, b=20)
+    )
+    st.plotly_chart(fig_comparison, use_container_width=True)
+
+# ---------------- CAMPAIGN TABLE ----------------
+st.markdown('<div class="section-heading">Campaign Details</div>',
+            unsafe_allow_html=True)
+
+display_columns = [
+    "Campaign", "Channel", "Spend_INR", "Revenue_INR",
+    "Net_Return_INR", "ROI_Percent", "Clicks",
+    "Conversions", "Conversion_Rate",
+    "Cost_Per_Conversion_INR"
+]
+
+table = filtered[display_columns].sort_values(
+    "ROI_Percent", ascending=False, na_position="last"
+)
+
+st.dataframe(
+    table,
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "Spend_INR": st.column_config.NumberColumn(
+            "Spend (₹)", format="₹%.2f"
+        ),
+        "Revenue_INR": st.column_config.NumberColumn(
+            "Revenue (₹)", format="₹%.2f"
+        ),
+        "Net_Return_INR": st.column_config.NumberColumn(
+            "Net Return (₹)", format="₹%.2f"
+        ),
+        "ROI_Percent": st.column_config.NumberColumn(
+            "ROI (%)", format="%.2f%%"
+        ),
+        "Conversion_Rate": st.column_config.NumberColumn(
+            "Conversion Rate (%)", format="%.2f%%"
+        ),
+        "Cost_Per_Conversion_INR": st.column_config.NumberColumn(
+            "Cost per Conversion (₹)", format="₹%.2f"
+        )
+    }
+)
+
+csv_data = filtered.to_csv(index=False).encode("utf-8")
+
+st.download_button(
+    "⬇️ Download Analysed Data (CSV)",
+    data=csv_data,
+    file_name="marketing_campaign_analysis.csv",
+    mime="text/csv"
+)
+
+# ---------------- BUSINESS INSIGHTS ----------------
+st.divider()
+st.markdown('<div class="section-heading">💡 Business Insights & Recommendations</div>',
+            unsafe_allow_html=True)
+
+valid_campaigns = filtered.dropna(subset=["ROI_Percent"])
+
+if not valid_campaigns.empty:
+    best_campaign = valid_campaigns.loc[
+        valid_campaigns["ROI_Percent"].idxmax()
+    ]
+
+    st.success(
+        f"**Top campaign:** {best_campaign['Campaign']} "
+        f"delivered an ROI of {best_campaign['ROI_Percent']:.2f}%."
+    )
+else:
+    st.info("No campaign has a valid ROI for ranking.")
+
+valid_channels = channel_summary.dropna(subset=["ROI (%)"])
+
+if not valid_channels.empty:
+    best_channel = valid_channels.loc[
+        valid_channels["ROI (%)"].idxmax()
+    ]
+    lowest_channel = valid_channels.loc[
+        valid_channels["ROI (%)"].idxmin()
+    ]
+
+    st.info(
+        f"**Best channel by ROI:** {best_channel['Channel']} "
+        f"({best_channel['ROI (%)']:.2f}%)."
+    )
+
+    if len(valid_channels) > 1:
+        st.warning(
+            f"**Review opportunity:** {lowest_channel['Channel']} "
+            f"has the lowest channel ROI ({lowest_channel['ROI (%)']:.2f}%). "
+            "Review targeting, campaign costs, and conversion quality "
+            "before changing the budget."
+        )
+
+if net_return > 0:
+    st.write(
+        "**Overall observation:** Revenue exceeds campaign spend "
+        "in the selected data. Review profitability and other costs "
+        "before making final budget decisions."
+    )
+elif net_return < 0:
+    st.write(
+        "**Overall observation:** Campaign spend exceeds revenue. "
+        "Investigate campaign performance and tracking before "
+        "allocating additional budget."
+    )
+else:
+    st.write(
+        "**Overall observation:** Revenue equals campaign spend "
+        "in the selected data."
+    )
+
+# ---------------- METHODOLOGY ----------------
+with st.expander("📘 How the metrics are calculated"):
+    st.markdown("""
+    - **Net Return** = Revenue − Spend
+    - **ROI (%)** = (Revenue − Spend) ÷ Spend × 100
+    - **Conversion Rate (%)** = Conversions ÷ Clicks × 100
+    - **Cost per Conversion** = Spend ÷ Conversions
+
+    ROI here is calculated before other business costs, such as
+    salaries, taxes, and overheads. A positive ROI does not necessarily
+    mean the business is fully profitable.
+    """)
+
+# ---------------- FOOTER ----------------
+st.divider()
+
+st.markdown(
+    '<div class="footer">'
+    'Marketing Campaign ROI Analysis | Built with Python, Pandas, '
+    'Streamlit & Plotly<br>'
+    'Portfolio project • Sample data is simulated; uploaded data '
+    'is supplied by the user.'
+    '</div>',
+    unsafe_allow_html=True
+)
